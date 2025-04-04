@@ -129,17 +129,51 @@ async function run() {
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: email,
-        subject: "Password Reset Code",
-        text: `Your verification code is: ${otp}`
+        subject: "Password Reset Verification Code",
+        text: `Dear User,  
+    
+    We received a request to reset your password. Please use the following One-Time Password (OTP) to proceed:  
+    
+    **${otp}**  
+    
+    This OTP will expire in 5 minutes. If you did not request this, please ignore this email.  
+    
+    Best regards,  
+    Chatify Support Team`
     };
+    
     transporter.sendMail(mailOptions, (err, info) => {
       if (err) return res.status(500).json({ message: "Email sending failed" });
-      res.json({ message: "OTP sent to your email, check inbox or spam" });
+      res.json({message: "An OTP has been sent to your email. Please check your inbox or spam folder. The OTP will expire in 5 minutes"});
   });
      }
       
     })
 
+    app.post('/reset-password/verify-otp', async(req,res)=>{
+      const data= req.body;
+      const {email,otp}=data;
+      const user= await usersCollection.findOne({email:email})
+      
+      if(!user || user.otp !==otp || new Date()> new Date(user.otpExpires)){
+        return res.status(400).json({message: "Invalid or Expired OTP"})
+      }
+      await usersCollection.updateOne({email},{$unset :{otp: "",otpExpires:""}})
+      res.json({message: "Your OTP has been successfully verified"})
+
+    })
+  
+    app.post('/auth/password/reset',async(req,res)=>{
+      const data= req.body;
+      const {email,password}=data;
+      try {
+        const securePassword= await hashPassword(password);
+      await usersCollection.updateOne({ email }, { $set: {password: securePassword} });
+      res.json({ message: "Password reset successful" });
+      } catch (error) {
+        res.json({message: "Something went Wrong"})
+      }
+    })
     // Get all users (for testing)
     app.get('/users', async (req, res) => {
       const result = await usersCollection.find().toArray();
