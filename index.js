@@ -8,6 +8,8 @@ const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.nu3ic.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const bcrypt = require('bcrypt');
+const nodemailer = require("nodemailer");
+
 app.use(cors());
 app.use(express.json());
 
@@ -33,6 +35,15 @@ const verifyPassword = async (enteredPassword, storedPassword) => {
     return false;
   }
 }
+// generate otp
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+  }
+});
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -100,6 +111,34 @@ async function run() {
       const response = await usersCollection.insertOne(userInfo);
       res.status(201).json({ message: "User registered successfully", userId: response.insertedId });
     });
+
+    //reset password logic
+    app.post('/auth/reset-password', async(req,res)=>{
+      const email= req.body.email;
+     // first check if the email exists in db
+     const existingUser = await usersCollection.findOne({ email: email });
+     if (!existingUser) {
+       return res.status(404).json({ message: "User Not Found" });
+     }
+     else{
+      const otp = generateOTP();
+      const otpExpires = new Date(Date.now() + 5 * 60000); // Expire in 5 minutes
+      console.log(otp)
+      await usersCollection.updateOne({ email }, { $set: { otp, otpExpires } });
+     
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: "Password Reset Code",
+        text: `Your verification code is: ${otp}`
+    };
+    transporter.sendMail(mailOptions, (err, info) => {
+      if (err) return res.status(500).json({ message: "Email sending failed" });
+      res.json({ message: "OTP sent to your email, check inbox or spam" });
+  });
+     }
+      
+    })
 
     // Get all users (for testing)
     app.get('/users', async (req, res) => {
