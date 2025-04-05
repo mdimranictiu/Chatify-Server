@@ -2,50 +2,66 @@ const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const nodemailer = require("nodemailer");
+const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('cloudinary').v2;
+const { MongoClient, ServerApiVersion } = require('mongodb');
 
 const app = express();
 const port = process.env.PORT || 5000;
-const { MongoClient, ServerApiVersion } = require('mongodb');
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.nu3ic.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-const bcrypt = require('bcrypt');
-const nodemailer = require("nodemailer");
 
+// MongoDB connection URI
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.nu3ic.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+
+// Cloudinary config
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// Generate Hash Password
+// Multer + Cloudinary config
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'user_profiles',
+    allowed_formats: ['jpg', 'jpeg', 'png'],
+    transformation: [{ width: 300, height: 300, crop: 'limit' }],
+  },
+});
+const upload = multer({ storage });
+
+// Password hashing function
 const hashPassword = async (password) => {
-  try {
-    const saltRounds = 10;
-    const salt = await bcrypt.genSalt(saltRounds);
+  const saltRounds = 10;
+  const salt = await bcrypt.genSalt(saltRounds);
+  return await bcrypt.hash(password, salt);
+};
 
-    const hashedPassword = await bcrypt.hash(password, salt);
-    return hashedPassword;
-  } catch (error) {
-    console.log("Error hashing Password", error);
-  }
-}
-
-// Verify hashed password
+// Verify password
 const verifyPassword = async (enteredPassword, storedPassword) => {
-  const isMatch = await bcrypt.compare(enteredPassword, storedPassword);
-  if (isMatch) {
-    return true;
-  } else {
-    return false;
-  }
-}
-// generate otp
+  return await bcrypt.compare(enteredPassword, storedPassword);
+};
+
+// Nodemailer transport
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-  }
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
 });
+
+// OTP generator
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+// MongoDB client setup
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -56,50 +72,37 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-
     const Database = client.db(`${process.env.DB_USER}`);
-
-    // collections
     const usersCollection = Database.collection('users');
 
     app.get('/', (req, res) => {
       res.send("Server running");
     });
 
-    // Get single user for login 
+    // Login
     app.post('/api/auth/user', async (req, res) => {
-      const data = req.body;
-      const { email, password } = data;
-      const user = await usersCollection.findOne({ email: email });
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      // Use bcrypt to verify the password
+      const { email, password } = req.body;
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(404).json({ message: "User not found" });
+
       const isPasswordCorrect = await verifyPassword(password, user.password);
-      if (!isPasswordCorrect) {
-        return res.status(401).json({ message: "Incorrect Password" });
-      }
+      if (!isPasswordCorrect) return res.status(401).json({ message: "Incorrect Password" });
+
       res.json(user);
     });
 
-    // Register new user
+    // Register
     app.post('/api/auth/register/user', async (req, res) => {
-      const data = req.body;
-      const { name, email, password } = data;
+      const { name, email, password } = req.body;
+      const existingUser = await usersCollection.findOne({ email });
+      if (existingUser) return res.status(400).json({ message: "User with this email already exists" });
 
-      // Check if the user already exists
-      const existingUser = await usersCollection.findOne({ email: email });
-      if (existingUser) {
-        return res.status(400).json({ message: "User with this email already exists" });
-      }
-
-      // If the user doesn't exist, hash the password and register the user
       const securePassword = await hashPassword(password);
       const userInfo = {
         name,
         email,
         password: securePassword,
-        profilePicture: '', // You can add logic to upload a profile picture if necessary
+        profilePicture: '',
         status: '',
         bio: '',
         blockedUsers: [],
@@ -112,82 +115,119 @@ async function run() {
       res.status(201).json({ message: "User registered successfully", userId: response.insertedId });
     });
 
-    //reset password logic
-    app.post('/auth/reset-password', async(req,res)=>{
-      const email= req.body.email;
-     // first check if the email exists in db
-     const existingUser = await usersCollection.findOne({ email: email });
-     if (!existingUser) {
-       return res.status(404).json({ message: "User Not Found" });
-     }
-     else{
+    // Forgot Password - Send OTP
+    app.post('/auth/reset-password', async (req, res) => {
+      const { email } = req.body;
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(404).json({ message: "User Not Found" });
+
       const otp = generateOTP();
-      const otpExpires = new Date(Date.now() + 5 * 60000); // Expire in 5 minutes
-      console.log(otp)
+      const otpExpires = new Date(Date.now() + 5 * 60000); // 5 minutes
+
       await usersCollection.updateOne({ email }, { $set: { otp, otpExpires } });
-     
+
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: email,
         subject: "Password Reset Verification Code",
-        text: `Dear User,  
-    
-    We received a request to reset your password. Please use the following One-Time Password (OTP) to proceed:  
-    
-    **${otp}**  
-    
-    This OTP will expire in 5 minutes. If you did not request this, please ignore this email.  
-    
-    Best regards,  
-    Chatify Support Team`
-    };
-    
-    transporter.sendMail(mailOptions, (err, info) => {
-      if (err) return res.status(500).json({ message: "Email sending failed" });
-      res.json({message: "An OTP has been sent to your email. Please check your inbox or spam folder. The OTP will expire in 5 minutes"});
-  });
-     }
-      
-    })
+        text: `
+Dear User,
 
-    app.post('/reset-password/verify-otp', async(req,res)=>{
-      const data= req.body;
-      const {email,otp}=data;
-      const user= await usersCollection.findOne({email:email})
-      
-      if(!user || user.otp !==otp || new Date()> new Date(user.otpExpires)){
-        return res.status(400).json({message: "Invalid or Expired OTP"})
+We received a request to reset your password. Use the OTP below:
+
+${otp}
+
+This OTP will expire in 5 minutes.
+
+Best regards,
+Chatify Support Team`
+      };
+
+      transporter.sendMail(mailOptions, (err, info) => {
+        if (err) return res.status(500).json({ message: "Email sending failed" });
+        res.json({ message: "OTP sent to email. Please check inbox/spam." });
+      });
+    });
+
+    // Verify OTP
+    app.post('/reset-password/verify-otp', async (req, res) => {
+      const { email, otp } = req.body;
+      const user = await usersCollection.findOne({ email });
+
+      if (!user || user.otp !== otp || new Date() > new Date(user.otpExpires)) {
+        return res.status(400).json({ message: "Invalid or Expired OTP" });
       }
-      await usersCollection.updateOne({email},{$unset :{otp: "",otpExpires:""}})
-      res.json({message: "Your OTP has been successfully verified"})
 
-    })
-  
-    app.post('/auth/password/reset',async(req,res)=>{
-      const data= req.body;
-      const {email,password}=data;
+      await usersCollection.updateOne({ email }, { $unset: { otp: "", otpExpires: "" } });
+      res.json({ message: "OTP verified successfully" });
+    });
+
+    // Set New Password
+    app.post('/auth/password/reset', async (req, res) => {
+      const { email, password } = req.body;
       try {
-        const securePassword= await hashPassword(password);
-      await usersCollection.updateOne({ email }, { $set: {password: securePassword} });
-      res.json({ message: "Password reset successful" });
+        const securePassword = await hashPassword(password);
+        await usersCollection.updateOne({ email }, { $set: { password: securePassword } });
+        res.json({ message: "Password reset successful" });
       } catch (error) {
-        res.json({message: "Something went Wrong"})
+        res.status(500).json({ message: "Something went wrong" });
       }
-    })
-    // Get all users (for testing)
+    });
+
+    // Get All Users (test route)
     app.get('/users', async (req, res) => {
       const result = await usersCollection.find().toArray();
       res.send(result);
     });
 
-    console.log("You successfully connected to MongoDB!");
+    // Find user by email
+    app.post('/auth/find/Profile', async (req, res) => {
+      const { email } = req.body;
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(404).json({ message: "User Not Found" });
+
+      const { password, ...rest } = user;
+      res.send(rest);
+    });
+
+    // Update user profile (with image)
+    app.patch("/auth/update/profile", upload.single("image"), async (req, res) => {
+      try {
+        const { name, bio, email } = req.body;
+        console.log("Request received with:", { name, bio, email });
+    
+        const imageUrl = req.file?.path;
+        console.log("Image URL:", imageUrl);
+    
+        const updateData = { name, bio };
+        if (imageUrl) updateData.profilePicture = imageUrl;
+    
+        const updatedUser = await usersCollection.findOneAndUpdate(
+          { email },
+          { $set: updateData },
+          { returnDocument: "after", projection: { password: 0 } }
+        );
+    
+        if (!updatedUser.value) {
+          return res.status(404).json({ message: "User not found" });
+        }
+    
+        res.status(200).json(updatedUser.value);
+      } catch (err) {
+        console.error("Profile update error:", err);
+        res.status(500).json({ message: "Failed to update profile" });
+      }
+    });
+    
+
+    console.log(" MongoDB Connected Successfully");
   } finally {
-    // Ensures that the client will close when you finish/error
+    // Optional: keep client open if long running app
   }
 }
 
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`Server is running: http://localhost:${port}`);
+  console.log(` Server is running: http://localhost:${port}`);
 });
