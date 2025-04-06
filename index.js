@@ -218,6 +218,39 @@ Chatify Support Team`
         res.status(500).json({ message: "Failed to update profile" });
       }
     });
+    // update settings
+    app.patch('/api/update-settings', async (req, res) => {
+    
+      const { email, field, value } = req.body;
+    
+      try {
+        const user = await usersCollection.findOne({ email: email });
+    
+        if (!user) {
+          return res.status(404).json({ message: "User not Found" });
+        }
+    
+        const updateObj = {};
+        updateObj[field] = value;
+
+    
+        const result = await usersCollection.updateOne(
+          { email: email },
+          { $set: updateObj }
+        );
+    
+        if (result.modifiedCount > 0) {
+          return res.json({ message: "Setting updated successfully" });
+        } else {
+          return res.status(400).json({ message: "No changes made" });
+        }
+    
+      } catch (error) {
+        console.error("Update error:", error);
+        res.status(500).json({ message: "Internal Server Error" });
+      }
+    });
+    
     
 
     console.log(" MongoDB Connected Successfully");
