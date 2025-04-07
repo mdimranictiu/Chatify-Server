@@ -7,7 +7,7 @@ const nodemailer = require("nodemailer");
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -74,12 +74,13 @@ async function run() {
   try {
     const Database = client.db(`${process.env.DB_USER}`);
     const usersCollection = Database.collection('users');
+    const messagesCollection= Database.collection('messages')
 
     app.get('/', (req, res) => {
       res.send("Server running");
     });
 
-    // Login
+    // Login system implementation
     app.post('/api/auth/user', async (req, res) => {
       const { email, password } = req.body;
       const user = await usersCollection.findOne({ email });
@@ -179,6 +180,11 @@ Chatify Support Team`
       const result = await usersCollection.find().toArray();
       res.send(result);
     });
+    // get all message (test route)
+    app.get('/messages', async (req, res) => {
+      const result = await messagesCollection.find().toArray();
+      res.send(result);
+    });
 
     // Find user by email
     app.post('/auth/find/Profile', async (req, res) => {
@@ -194,10 +200,10 @@ Chatify Support Team`
     app.patch("/auth/update/profile", upload.single("image"), async (req, res) => {
       try {
         const { name, bio, email } = req.body;
-        console.log("Request received with:", { name, bio, email });
+
     
         const imageUrl = req.file?.path;
-        console.log("Image URL:", imageUrl);
+
     
         const updateData = { name, bio };
         if (imageUrl) updateData.profilePicture = imageUrl;
@@ -214,7 +220,6 @@ Chatify Support Team`
     
         res.status(200).json(updatedUser.value);
       } catch (err) {
-        console.error("Profile update error:", err);
         res.status(500).json({ message: "Failed to update profile" });
       }
     });
@@ -246,12 +251,82 @@ Chatify Support Team`
         }
     
       } catch (error) {
-        console.error("Update error:", error);
         res.status(500).json({ message: "Internal Server Error" });
       }
     });
     
+    //fetchOnlineusers
+    app.post('/api/find/onlineUsers',async(req,res)=>{
+      const {email}=req.body;
+      const allOnlineUsers= await usersCollection.find({isOnline:true}).toArray()
+      const otherOnlineUsers= allOnlineUsers.filter((user)=>user?.email!==email)
+      const result = otherOnlineUsers.map(user => ({
+        username: user.name,
+        profilePicture: user.profilePicture,
+        emailId: user.email
+      }));
+  
+      res.send(result)
+    })
+
+    //find recent contacts
+    app.post('/api/find/recent/contacts', async (req, res) => {
+      const { email } = req.body;
     
+      try {
+        const allRecentContacts = await usersCollection.find().toArray();
+    
+        const othersRecentContacts = allRecentContacts.filter(user => user?.email !== email);
+    
+        const result = othersRecentContacts.map(user => ({
+          name: user.name,
+          profilePicture: user.profilePicture,
+          email: user.email,
+          id: user._id,
+          isOnline: user.isOnline
+        }));
+    
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({
+          message: "Failed to fetch recent contacts",
+          error: error.message
+        });
+      }
+    });
+    // find receiver
+    app.post('/auth/find/receiver/',async(req,res)=>{
+      const {_id}=req.body;
+      const receiverId=_id;
+      try {
+        const user = await usersCollection.findOne({ _id: new ObjectId(receiverId) });
+        if (!user) return res.status(404).json({ message: "User Not Found" });
+  
+        const { password, ...rest } = user;
+        res.send(rest);
+      } catch (error) {
+        
+      }
+    })
+
+    // api to get messages btw sender and receiver
+    app.post('/api/get/messages',async(req,res)=>{
+      const {senderId,receiverId}=req.body;
+      try {
+        const messages= await messagesCollection.find({
+          $or: [
+            {senderId: senderId,receiverId:receiverId},
+            {senderId: receiverId,receiverId: senderId}
+          ]
+        }).sort({timestamp:1}).toArray()
+        res.send(messages)
+      } catch (error) {
+        res.status(500).json({message: error.message})
+      }
+
+    })
+    
+  
 
     console.log(" MongoDB Connected Successfully");
   } finally {
@@ -264,3 +339,4 @@ run().catch(console.dir);
 app.listen(port, () => {
   console.log(` Server is running: http://localhost:${port}`);
 });
+
