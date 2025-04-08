@@ -8,7 +8,8 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-
+const http= require('http')
+const {Server}= require('socket.io')
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -25,6 +26,20 @@ cloudinary.config({
 // Middlewares
 app.use(cors());
 app.use(express.json());
+
+//create HTTP server
+const server= http.createServer(app);
+
+// socket.io init
+const io= new Server(server,{
+  cors:{
+    origin: '*',
+    methods: ['GET','POST']
+  }
+})
+
+
+// check Connection of socket io
 
 // Multer + Cloudinary config
 const storage = new CloudinaryStorage({
@@ -325,8 +340,84 @@ Chatify Support Team`
       }
 
     })
+
+    // api for send single Message (test route)
+    app.post('/api/send/message',async(req,res)=>{
+      const  {text,senderId,receiverId} = req.body;
+      const timestamp= new Date().toISOString()
+      try {
+        const message={
+          text:text,
+          senderId:senderId,receiverId:receiverId,timestamp:timestamp
+        }
+        const result= await messagesCollection.insertOne(message)
+        res.status(200).json({result})
+      } catch (error) {
+        res.status(500).json({message: error.message})
+      }
+    })
     
+  // socket handle
+  // io.on("connection", (socket) => {
+  //   console.log("A client connected with socket ID:", socket.id); 
   
+  //  socket.on('send_message',async(data)=>{
+  //   console.log('message data',data)
+  //   const  {text,senderId,receiverId} = data;
+  //       const timestamp= new Date().toISOString()
+  //       try {
+  //         const message={
+  //           text:text,
+  //           senderId:senderId,receiverId:receiverId,timestamp:timestamp
+  //         }
+  //         const result=  messagesCollection.insertOne(message)
+  //         socket.to(receiverId).emit('receive_message',message);
+  //       } catch (error) {
+          
+  //       }
+  //  })
+  
+   
+         
+  //   socket.on("disconnect", () => {
+  //     console.log("A client disconnected");
+  //   });
+  // });
+  let onlineUsers = {};
+
+    io.on('connection', (socket) => {
+      console.log('A user connected');
+      socket.on('join', (userId) => {
+        onlineUsers[userId] = socket.id;
+        socket.userId = userId;
+        console.log(`${userId} joined the chat`);
+      });
+
+      socket.on('disconnect', () => {
+        if (socket.userId) {
+          delete onlineUsers[socket.userId];
+          console.log(`${socket.userId} disconnected`);
+        }
+      });
+
+      socket.on('send_message', async(messageData) => {
+        const  {text,senderId,receiverId} = messageData;
+        const timestamp= new Date().toISOString()
+        const message={
+          text:text,
+          senderId:senderId,receiverId:receiverId,timestamp:timestamp}
+        try {
+          const result= await messagesCollection.insertOne(message)
+          const receiverSocketId = onlineUsers[receiverId]
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit('receiveMessage', messageData);
+          }
+        } catch (error) {
+          console.log("Faild")
+        }
+
+      });
+    });
 
     console.log(" MongoDB Connected Successfully");
   } finally {
@@ -336,7 +427,12 @@ Chatify Support Team`
 
 run().catch(console.dir);
 
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(` Server is running: http://localhost:${port}`);
 });
 
+// const timestamp= new Date().toISOString()
+// console.log(timestamp)
+// server.listen(port, () => {
+//   console.log(`Server is running on port ${port}`);
+// });
