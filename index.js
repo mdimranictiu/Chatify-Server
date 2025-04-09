@@ -9,7 +9,8 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const http= require('http')
-const {Server}= require('socket.io')
+const {Server}= require('socket.io');
+const { timeStamp } = require('console');
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -285,30 +286,32 @@ Chatify Support Team`
     })
 
     //find recent contacts
-    app.post('/api/find/recent/contacts', async (req, res) => {
-      const { email } = req.body;
-    
+    app.post('/api/find/all/contacts', async (req, res) => {
+      const {email} = req.body;
+      const search = req.query?.search;
+      const query= {
+      name: { $regex: search, $options: "i" } }
       try {
-        const allRecentContacts = await usersCollection.find().toArray();
-    
-        const othersRecentContacts = allRecentContacts.filter(user => user?.email !== email);
-    
-        const result = othersRecentContacts.map(user => ({
-          name: user.name,
-          profilePicture: user.profilePicture,
-          email: user.email,
-          id: user._id,
-          isOnline: user.isOnline
-        }));
-    
-        res.send(result);
+      const allContacts = await usersCollection.find(query).toArray();
+      
+      const othersContacts = allContacts.filter(user => user?.email !== email);
+      
+      const result = othersContacts.map(user => ({
+      name: user.name,
+      profilePicture: user.profilePicture,
+      email: user.email,
+      id: user._id,
+      isOnline: user.isOnline
+      }));
+      
+      res.send(result);
       } catch (error) {
-        res.status(500).json({
-          message: "Failed to fetch recent contacts",
-          error: error.message
-        });
+      res.status(500).json({
+      message: "Failed to fetch recent contacts",
+      error: error.message
+      });
       }
-    });
+      });
     // find receiver
     app.post('/auth/find/receiver/',async(req,res)=>{
       const {_id}=req.body;
@@ -418,6 +421,56 @@ Chatify Support Team`
 
       });
     });
+
+    // find recent users 
+    app.post('/api/find/recent',async(req,res)=>{
+      const {userId}= req.body;
+      const search = req.query?.search
+      const query= {
+        name: { $regex: search, $options: "i" } }
+      console.log("search",search)
+      console.log('userId',userId)
+      // first fetch all messages that I send by last time
+    try {
+
+      if(userId){
+        // find all messages receiver id
+        const lastMessagesUsers= await messagesCollection.find({senderId: userId},{projection:{receiverId:1,_id:0}}).sort({timestamp:-1}).toArray()
+        // make the id uniques
+        const uniqueReceiverIdSet= new Set();
+        const uniqueReceiverIds=[]
+        for(const msg of lastMessagesUsers){
+          if(!uniqueReceiverIdSet.has(msg.receiverId)){
+            uniqueReceiverIdSet.add(msg.receiverId);
+            uniqueReceiverIds.push(msg.receiverId)
+            console.log(msg.receiverId)
+          }
+        }
+        console.log(uniqueReceiverIds)
+
+
+        const recentUserProfiles = await Promise.all(
+          uniqueReceiverIds.map(async (receiverId) => {
+            const profile = await usersCollection.findOne({ _id: new ObjectId(receiverId) });
+            if (profile) {
+              const { name, profilePicture, _id, isOnline } = profile;
+              console.log(profile)
+              return { name, profilePicture, _id, isOnline };
+            }
+          })
+        );
+        const finalData = recentUserProfiles.filter(user =>
+          user?.name?.toLowerCase().includes(search?.toLowerCase())
+        );
+        res.send(finalData);
+
+      }
+
+    } catch (error) {
+      console.log(error.message)
+    }
+
+    })
 
     console.log(" MongoDB Connected Successfully");
   } finally {
