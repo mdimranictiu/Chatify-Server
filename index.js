@@ -158,7 +158,7 @@ async function run() {
         createdAt: new Date().toISOString(),
         role: "user",
         profilePhotoVisibility: "everyone",
-        isOnline: true,
+        OnlineStatus: 'true',
       };
 
       const response = await usersCollection.insertOne(userInfo);
