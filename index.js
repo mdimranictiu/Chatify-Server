@@ -485,10 +485,7 @@ Chatify Support Team`,
           // find all messages receiver id
           const lastMessagesUsers = await messagesCollection
             .find(
-              {  $or: [
-                { senderId: userId },
-                { receiverId: userId }
-              ] },
+              { senderId: userId },
               { projection: { receiverId: 1, _id: 0 } }
             )
             .sort({ timestamp: -1 })
