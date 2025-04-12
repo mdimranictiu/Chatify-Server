@@ -486,8 +486,11 @@ Chatify Support Team`,
           const lastMessagesUsers = await messagesCollection
             .find(
               {  $or: [
-                { senderId: userId },
-                { receiverId: userId }
+                { senderId: userId }, // আমি পাঠিয়েছি
+                { 
+                  receiverId: userId, // আমাকে পাঠিয়েছে
+                  senderId: { $ne: userId } // কিন্তু আমি নিজে নিজেকে না
+                }
               ] },
               { projection: { receiverId: 1, _id: 0 } }
             )
