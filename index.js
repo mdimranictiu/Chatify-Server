@@ -479,13 +479,16 @@ Chatify Support Team`,
         name: { $regex: search, $options: "i" },
       };
 
-      // first fetch all messages that I send by last time
+      // first fetch all messages that I send and receive by last time
       try {
         if (userId) {
           // find all messages receiver id
           const lastMessagesUsers = await messagesCollection
             .find(
-              { senderId: userId },
+              {  $or: [
+                { senderId: userId },
+                { receiverId: userId }
+              ] },
               { projection: { receiverId: 1, _id: 0 } }
             )
             .sort({ timestamp: -1 })
